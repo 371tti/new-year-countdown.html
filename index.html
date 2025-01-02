@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>新年カウントダウン</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- OGP (Open Graph Protocol) -->
+  <meta property="og:title" content="新年カウントダウン - 0:00線ロック地図" />
+  <meta property="og:description" content="地球上で0:00を迎える経度に合わせて地図を固定。年越しがどんどん進む様子をカウントダウン！" />
+  <meta property="og:image" content="https://dev.371tti.net/nyc/ogp.webp" />
+  <meta property="og:url" content="https://dev.371tti.net/nyc" />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="新年カウントダウン - 0:00線ロック地図" />
+  <meta name="twitter:description" content="地球上で0:00を迎える経度に合わせて地図を固定。年越しがどんどん進む様子をカウントダウン！" />
+  <meta name="twitter:image" content="https://dev.371tti.net/nyc/ogp.webp" />
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: sans-serif;
+      background: #000;
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+
+    .midnight-line {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 1px;
+      left: 50%;
+      background: red;
+      z-index: 999;
+      pointer-events: none;
+      transition: background 2s;
+    }
+
+    .countdown-container {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max-content;
+      transform: translate(-50%, -50%);
+      color: #ffffffd4;
+      text-shadow: #ffffff 0 0 5px;
+      font-size: 4rem;
+      text-align: center;
+      z-index: 1001;
+      font-weight: bold;
+      pointer-events: none;
+    }
+
+    span {
+      pointer-events: none;
+    }
+
+    .info-panel {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.5);
+      color: #fff;
+      padding: 10px 15px;
+      font-size: 0.9rem;
+      z-index: 1002;
+      min-width: 170px;
+      cursor: pointer;
+    }
+
+    .info-panel:hover {
+      background: rgba(0, 0, 0, 0.7);
+    }
+
+    .info-panel p {
+      margin: 0.3rem 0;
+    }
+
+    @media (max-width: 600px) {
+      .countdown-container {
+        font-size: 2.5rem;
+      }
+
+      .info-panel {
+        font-size: 0.8rem;
+      }
+    }
+
+    .city-plus {
+      position: relative;
+      width: 10px;
+      height: 10px;
+    }
+
+    .city-plus::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 4px;
+      width: 10px;
+      height: 1px;
+    }
+
+    .city-plus::after {
+      content: "";
+      position: absolute;
+      left: 4px;
+      top: 0;
+      width: 1px;
+      height: 10px;
+    }
+
+    .city-plus-red::before,
+    .city-plus-red::after {
+      background: red;
+    }
+
+    .city-plus-green::before,
+    .city-plus-green::after {
+      background: green;
+    }
+
+    .city-plus-yellow::before,
+    .city-plus-yellow::after {
+      background: yellow;
+    }
+
+    .dark-popup .leaflet-popup-content-wrapper {
+      background: #222;
+      color: #fff;
+      border: 1px solid #444;
+    }
+
+    .dark-popup .leaflet-popup-tip {
+      background: #222;
+      border: 1px solid #444;
+    }
+    #infoPanel {
+      cursor: pointer;
+      border: #a7a7a7 solid 1px;
+      text-align: center;
+    }
+    select, option {
+      background-color: #000;
+      color: #fff;
+      border-radius: 0%;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="map">
+    <div class="midnight-line" id="midnightLine"></div>
+    <div class="countdown-container" id="countdown">
+      <span id="countdownText">新年まであと --:--:--</span>
+    </div>
+    <div class="info-panel">
+      <p>現在0:00の経度: <span id="midnightLon">--</span>°</p>
+      <p style="opacity:0.7;">(10msごとに更新)</p>
+      <p style="margin-top:0.5rem;" id="infoPanel">ここを押して地図を操作</p>
+      <div>
+        <label for="modeSelector">モードを選択:</label>
+        <select id="modeSelector">
+          <option value="auto">最も近い国のモード</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Leaflet.js -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    let midnightLineEnabled = true;
+    let isMapInteracting = false;
+
+    const map = L.map('map', {
+      center: [35, 135],
+      zoom: 4,
+      worldCopyJump: true,
+      crs: L.CRS.EPSG3857,
+      dragging: true,
+      touchZoom: true,
+      scrollWheelZoom: true,
+      doubleClickZoom: true,
+      inertia: false,
+      tap: true
+    });
+
+    L.tileLayer(
+      'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      {
+        attribution: 'Map tiles by Carto, under CC BY 3.0. Data by © OpenStreetMap',
+        maxZoom: 19,
+        keepBuffer: 50, // 画面外のタイルを先読みする数（3タイル分）
+      updateWhenIdle: true, // 地図操作がアイドル状態になったら更新
+      updateWhenZooming: true, // ズーム中もタイルを積極的に読み込み
+      }
+    ).addTo(map);
+
+    function getCurrentMidnightLongitude() {
+      const now = new Date();
+      const h = now.getUTCHours();
+      const m = now.getUTCMinutes();
+      const s = now.getUTCSeconds();
+      const ms = now.getUTCMilliseconds();
+      const totalHour = h + m / 60 + s / 3600 + ms / 3600000;
+      let lon = - (totalHour * 15);
+      lon = ((lon + 180) % 360) - 180;
+      return lon;
+    }
+
+    function fixMapLongitude() {
+      const center = map.getCenter();
+      const midLon = getCurrentMidnightLongitude();
+      map.setView([center.lat, midLon], map.getZoom(), { animate: false });
+    }
+
+    function applyMidnightLineState() {
+      const lineElem = document.getElementById('midnightLine');
+      if (midnightLineEnabled) {
+        lineElem.style.display = 'block';
+        map.dragging.disable();
+        map.touchZoom.disable();
+        map.scrollWheelZoom.disable();
+        map.doubleClickZoom.disable();
+        if (map.tap) {
+          map.tap.disable();
+        }
+      } else {
+        lineElem.style.display = 'none';
+        map.dragging.enable();
+        map.touchZoom.enable();
+        map.scrollWheelZoom.enable();
+        map.doubleClickZoom.enable();
+        if (map.tap) {
+          map.tap.enable();
+        }
+      }
+    }
+
+    function toggleMidnightLine() {
+      midnightLineEnabled = !midnightLineEnabled;
+      if (midnightLineEnabled) {
+        document.getElementById('infoPanel').textContent = 'ここを押して地図を操作';
+      } else {
+        document.getElementById('infoPanel').textContent = '0:00でロック';
+      }
+      applyMidnightLineState();
+    }
+
+    applyMidnightLineState();
+    document.getElementById('infoPanel')
+      .addEventListener('click', toggleMidnightLine);
+
+    map.on('movestart', () => isMapInteracting = true);
+    map.on('moveend', () => isMapInteracting = false);
+    map.on('zoomstart', () => isMapInteracting = true);
+    map.on('zoomend', () => isMapInteracting = false);
+
+    let lineIsHighlighted = false;
+    const userMarkers = [];
+
+    setInterval(() => {
+      if (midnightLineEnabled) {
+        fixMapLongitude();
+      }
+      document.getElementById('midnightLon').textContent =
+        getCurrentMidnightLongitude().toFixed(4);
+
+      if (!lineIsHighlighted) {
+        const center = map.getCenter();
+        const threshold = 0.05;
+
+        for (let marker of userMarkers) {
+          const { lat, lng } = marker.getLatLng();
+          const dLat = Math.abs(lat - center.lat);
+          const dLon = Math.abs(lng - center.lng);
+          if (dLat < threshold && dLon < threshold) {
+            highlightMidnightLine("yellow");
+            lineIsHighlighted = true;
+            break;
+          }
+        }
+      }
+
+    }, 10);
+
+    function highlightMidnightLine(color) {
+      const lineElem = document.getElementById('midnightLine');
+      lineElem.style.background = color;
+      setTimeout(() => {
+        lineElem.style.background = 'red';
+        lineIsHighlighted = false;
+      }, 2000);
+    }
+
+    function createYellowPlusIcon() {
+      return L.divIcon({
+        html: '<div class="city-plus city-plus-yellow"></div>',
+        className: '',
+        iconSize: [10, 10],
+        iconAnchor: [5, 5]
+      });
+    }
+
+    map.on('click', (e) => {
+      if (!midnightLineEnabled && !isMapInteracting) {
+        const marker = L.marker(e.latlng, {
+          icon: createYellowPlusIcon()
+        }).addTo(map);
+
+        marker.bindPopup("新しいマーカー", {
+          className: "dark-popup"
+        });
+
+        userMarkers.push(marker);
+
+        marker.on('contextmenu', () => {
+          map.removeLayer(marker);
+          const idx = userMarkers.indexOf(marker);
+          if (idx >= 0) {
+            userMarkers.splice(idx, 1);
+          }
+        });
+      }
+    });
+
+    function createPlusIcon(colorClass) {
+      return L.divIcon({
+        html: `<div class="city-plus ${colorClass}"></div>`,
+        className: '',
+        iconSize: [10, 10],
+        iconAnchor: [5, 5]
+      });
+    }
+
+    function placeRepeatingMarkers(lat, lon, icon, label) {
+      for (let k = -1; k <= 1; k++) {
+        const adjLon = lon + k * 360;
+        L.marker([lat, adjLon], { icon })
+          .addTo(map)
+          .bindPopup(label, { className: 'dark-popup' });
+      }
+    }
+
+    const majorCities = [
+      { name: '東京 (UTC+9)', lat: 35.6804, lon: 139.7690, timezone: 'UTC+9', meridian: 135 },
+      { name: '大阪 (UTC+9)', lat: 34.6937, lon: 135.5023, timezone: 'UTC+9', meridian: 135 },
+      { name: '名古屋 (UTC+9)', lat: 35.1802, lon: 136.9066, timezone: 'UTC+9', meridian: 135 },
+      { name: '福岡 (UTC+9)', lat: 33.5904, lon: 130.4017, timezone: 'UTC+9', meridian: 135 },
+      { name: '札幌 (UTC+9)', lat: 43.0621, lon: 141.3544, timezone: 'UTC+9', meridian: 135 },
+      { name: 'ニューヨーク (UTC-5)', lat: 40.7128, lon: -74.0060, timezone: 'UTC-5', meridian: -75 },
+      { name: 'ロサンゼルス (UTC-8)', lat: 34.0522, lon: -118.2437, timezone: 'UTC-8', meridian: -120 },
+      { name: 'シカゴ (UTC-6)', lat: 41.8781, lon: -87.6298, timezone: 'UTC-6', meridian: -90 },
+      { name: 'ヒューストン (UTC-6)', lat: 29.7604, lon: -95.3698, timezone: 'UTC-6', meridian: -90 },
+      { name: 'フェニックス (UTC-7)', lat: 33.4484, lon: -112.0740, timezone: 'UTC-7', meridian: -105 },
+      { name: 'ロンドン (UTC+0)', lat: 51.5074, lon: -0.1278, timezone: 'UTC+0', meridian: 0 },
+      { name: 'パリ (UTC+1)', lat: 48.8566, lon: 2.3522, timezone: 'UTC+1', meridian: 15 },
+      { name: 'ベルリン (UTC+1)', lat: 52.5200, lon: 13.4050, timezone: 'UTC+1', meridian: 15 },
+      { name: 'カイロ (UTC+2)', lat: 30.0444, lon: 31.2357, timezone: 'UTC+2', meridian: 30 },
+      { name: 'モスクワ (UTC+3)', lat: 55.7558, lon: 37.6173, timezone: 'UTC+3', meridian: 45 },
+      { name: 'ドバイ (UTC+4)', lat: 25.2048, lon: 55.2708, timezone: 'UTC+4', meridian: 60 },
+      { name: '北京 (UTC+8)', lat: 39.9042, lon: 116.4074, timezone: 'UTC+8', meridian: 120 },
+      { name: 'シドニー (UTC+10)', lat: -33.8688, lon: 151.2093, timezone: 'UTC+10', meridian: 150 },
+      { name: 'メルボルン (UTC+10)', lat: -37.8136, lon: 144.9631, timezone: 'UTC+10', meridian: 150 },
+      { name: 'ブリスベン (UTC+10)', lat: -27.4698, lon: 153.0251, timezone: 'UTC+10', meridian: 150 },
+      { name: 'リオデジャネイロ (UTC-3)', lat: -22.9068, lon: -43.1729, timezone: 'UTC-3', meridian: -45 },
+      { name: 'バンクーバー (UTC-8)', lat: 49.2827, lon: -123.1207, timezone: 'UTC-8', meridian: -120 },
+      { name: 'トロント (UTC-5)', lat: 43.6532, lon: -79.3832, timezone: 'UTC-5', meridian: -75 },
+      { name: 'モントリオール (UTC-5)', lat: 45.5017, lon: -73.5673, timezone: 'UTC-5', meridian: -75 },
+      { name: 'メキシコシティ (UTC-6)', lat: 19.4326, lon: -99.1332, timezone: 'UTC-6', meridian: -90 },
+      { name: 'ロサンゼルス (UTC-8)', lat: 34.0522, lon: -118.2437, timezone: 'UTC-8', meridian: -120 },
+      { name: 'インドネシア西部 (UTC+7)', lat: -6.2088, lon: 106.8456, timezone: 'UTC+7', meridian: 105 }
+    ];
+
+    majorCities.forEach(city => {
+      placeRepeatingMarkers(
+        city.lat,
+        city.lon,
+        createPlusIcon('city-plus-red'),
+        `${city.name}`
+      );
+
+      placeRepeatingMarkers(
+        city.lat,
+        city.meridian,
+        createPlusIcon('city-plus-green'),
+        `${city.name}の子午線`
+      );
+    });
+
+
+    const countryUTCSeconds = [
+      { name: "日本", utc_seconds: 1735657200 },
+      { name: "アメリカ（ニューヨーク）", utc_seconds: 1735707600 },
+      { name: "アメリカ（ロサンゼルス）", utc_seconds: 1735718400 },
+      { name: "イギリス", utc_seconds: 1735689600 },
+      { name: "フランス", utc_seconds: 1735686000 },
+      { name: "ドイツ", utc_seconds: 1735686000 },
+      { name: "エジプト", utc_seconds: 1735682400 },
+      { name: "ロシア", utc_seconds: 1735678800 },
+      { name: "アラブ首長国連邦", utc_seconds: 1735675200 },
+      { name: "中国", utc_seconds: 1735660800 },
+      { name: "オーストラリア", utc_seconds: 1735653600 },
+      { name: "ブラジル", utc_seconds: 1735700400 },
+      { name: "カナダ", utc_seconds: 1735707600 },
+      { name: "メキシコ", utc_seconds: 1735711200 },
+      { name: "インドネシア（西部）", utc_seconds: 1735664400 }, // UTC+7
+    ];
+
+    function populateSelector() {
+      const selector = document.getElementById("modeSelector");
+      countryUTCSeconds.forEach(country => {
+        const option = document.createElement("option");
+        option.value = country.name;
+        option.textContent = country.name;
+        selector.appendChild(option);
+      });
+    }
+
+    function getNextCountryToCelebrate() {
+      const nowUTCSeconds = Math.floor(Date.now() / 1000);
+      let nextCountry = null;
+      let closestDifference = Infinity;
+
+      countryUTCSeconds.forEach(country => {
+        const difference = country.utc_seconds - nowUTCSeconds;
+        if (difference > 0 && difference < closestDifference) {
+          nextCountry = country;
+          closestDifference = difference;
+        }
+      });
+
+      return nextCountry;
+    }
+
+    function updateCountdown() {
+      const nowUTCSeconds = Math.floor(Date.now() / 1000);
+      const selector = document.getElementById("modeSelector");
+      const mode = selector.value;
+
+      let selectedCountry = null;
+      if (mode === "auto") {
+        selectedCountry = getNextCountryToCelebrate();
+      } else {
+        selectedCountry = countryUTCSeconds.find(country => country.name === mode);
+      }
+
+      if (selectedCountry) {
+        const remainingSeconds = selectedCountry.utc_seconds - nowUTCSeconds;
+
+        if (remainingSeconds <= 0) {
+          document.getElementById("countdown").innerHTML = `🎉 ${selectedCountry.name} が新年を迎えました！`;
+        } else {
+          const hours = Math.floor(remainingSeconds / 3600);
+          const minutes = Math.floor((remainingSeconds % 3600) / 60);
+          const seconds = remainingSeconds % 60;
+
+          document.getElementById("countdown").innerHTML = `
+            ${selectedCountry.name} が<br>新年を迎えるまで<br>
+            ${hours} : ${String(minutes).padStart(2, "0")} : 
+            ${String(seconds).padStart(2, "0")}
+          `;
+        }
+      } else {
+        document.getElementById("countdown").innerHTML = "すべての国が新年を迎えました！";
+      }
+    }
+
+    document.getElementById("modeSelector").addEventListener("change", updateCountdown);
+    populateSelector();
+    setInterval(updateCountdown, 10);
+    updateCountdown();
+  </script>
+</body>
+
+</html>
